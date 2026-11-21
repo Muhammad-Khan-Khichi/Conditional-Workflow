@@ -1,5 +1,6 @@
 import os
 from typing import TypedDict, Annotated
+from langgraph.graph.message import add_message
 from langgraph.graph import StateGraph, START, END
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
@@ -10,6 +11,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+#Step 1: Building the RAG Retriever
 #Embedding Model
 embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
 
@@ -26,4 +28,49 @@ def build_retriever(pdf_path: str):
     return vectorstore.as_retriever(search_kwargs={"k": 4})
 
 academic_retriever = build_retriever("data/Academic_Handbook.pdf")
-academic_retriever = build_retriever("data/Fee.pdf")
+fee_retriever = build_retriever("data/Fee.pdf")
+
+#LLM
+llm = ChatGroq(
+    model="openai/gpt-oss-120b",
+    temperature=0.4
+)
+
+#Step 2: State Making
+class State(TypedDict):
+    program: str
+    messages: Annotated[list, add_message]
+    query_type: str
+    retrieve_context: str
+
+#Step 3: Nodes Generation
+
+def classifier_node(state: State) ->dict:
+    """Look at the latest user message and decide which path to take."""
+
+    last_message = state["messages"][-1].content
+
+    prompt = (
+        "Classify the following student query into exactly one category: "
+        "'academic', 'fee', or 'general'.\n\n"
+        "Use 'academic' for questions about attendance, exams, grading, credits, "
+        "promotion, course structure, summer training, or degree requirements.\n"
+        "Use 'fee' for questions about tuition, payment, refund, late charges, "
+        "scholarships, or any money-related topic.\n"
+        "Use 'general' for greetings, casual talk, or anything not related to "
+        "the college rules or fee.\n\n"
+        f"Query: {last_message}\n\n"
+        "Return only one word: academic, fee, or general."
+    )
+
+    response = llm.invoke(prompt)
+    category = response.content.strip().lower()
+
+    if "academic" in category:
+        category = "academic" 
+    elif "fee" in category:
+        category = "fee"
+    else:
+        category = "general"
+
+    return {"query_type": category}
